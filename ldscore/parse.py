@@ -7,6 +7,7 @@ This module contains functions for parsing various ldsc-defined file formats.
 
 
 import numpy as np
+import scipy.sparse
 import pandas as pd
 import os
 import glob
@@ -46,6 +47,9 @@ def which_compression(fh):
     elif os.access(fh + '.gz', 4):
         suffix = '.gz'
         compression = 'gzip'
+    elif os.access(fh + '.npz', 4):
+        suffix = '.npz'
+        compression = 'npz'
     elif os.access(fh, 4):
         suffix = ''
         compression = None
@@ -96,11 +100,12 @@ def sumstats(fh, alleles=False, dropna=True):
     return x
 
 
-def ldscore_fromlist(flist, num=None):
+def ldscore_fromlist(flist, num=None, column_name=None):
     '''Sideways concatenation of a list of LD Score files.'''
     ldscore_array = []
     for i, fh in enumerate(flist):
-        y = ldscore(fh, num)
+        print(fh)
+        y = ldscore(fh, num, column_name=column_name)
         if i > 0:
             if not series_eq(y.SNP, ldscore_array[0].SNP):
                 raise ValueError('LD Scores for concatenation must have identical SNP columns.')
@@ -113,18 +118,36 @@ def ldscore_fromlist(flist, num=None):
 
     return pd.concat(ldscore_array, axis=1)
 
+def ldscore_singlecolumn(fh, num=None):
+    '''Parse .l2.ldscore files, split across num chromosomes. See docs/file_formats_ld.txt.'''
+    suffix = '.l2.ldscore'
+    if num is not None:  # num files, e.g., one per chromosome
+        chrs = get_present_chrs(fh, num+1)
+        first_fh = sub_chr(fh, chrs[0]) + suffix
+        s, compression = which_compression(first_fh)
+        chr_ld = [l2_parser(sub_chr(fh, i) + suffix + s, compression) for i in chrs]
+        x = pd.concat(chr_ld)  # automatically sorted by chromosome
+    else:  # just one file
+        s, compression = which_compression(fh + suffix)
+        x = l2_parser(fh + suffix + s, compression)
 
-def l2_parser(fh, compression):
+    x = x.sort_values(by=['CHR', 'BP']) # SEs will be wrong unless sorted
+    x = x.drop(['CHR', 'BP'], axis=1).drop_duplicates(subset='SNP')
+    return x
+
+def l2_parser(fh, compression, column_name = None):
     '''Parse LD Score files'''
-    x = read_csv(fh, header=0, compression=compression)
+    x = read_csv(fh, header=0, compression=compression, usecols=["CHR", "SNP", "BP", column_name] if column_name else None)
     if 'MAF' in x.columns and 'CM' in x.columns:  # for backwards compatibility w/ v<1.0.0
         x = x.drop(['MAF', 'CM'], axis=1)
     return x
 
-
 def annot_parser(fh, compression, frqfile_full=None, compression_frq=None):
     '''Parse annot files'''
-    df_annot = read_csv(fh, header=0, compression=compression).drop(['SNP','CHR', 'BP', 'CM'], axis=1, errors='ignore').astype(float)
+    if compression == "npz":
+        df_annot = pd.DataFrame.sparse.from_spmatrix(scipy.sparse.load_npz(fh))
+    else:
+        df_annot = read_csv(fh, header=0, compression=compression).drop(['SNP','CHR', 'BP', 'CM'], axis=1, errors='ignore').astype(float)
     if frqfile_full is not None:
         df_frq = frq_parser(frqfile_full, compression_frq)
         df_annot = df_annot[(.95 > df_frq.FRQ) & (df_frq.FRQ > 0.05)]
@@ -139,18 +162,18 @@ def frq_parser(fh, compression):
     return df[['SNP', 'FRQ']]
 
 
-def ldscore(fh, num=None):
+def ldscore(fh, num=None, column_name = None):
     '''Parse .l2.ldscore files, split across num chromosomes. See docs/file_formats_ld.txt.'''
     suffix = '.l2.ldscore'
     if num is not None:  # num files, e.g., one per chromosome
         chrs = get_present_chrs(fh, num+1)
         first_fh = sub_chr(fh, chrs[0]) + suffix
         s, compression = which_compression(first_fh)
-        chr_ld = [l2_parser(sub_chr(fh, i) + suffix + s, compression) for i in chrs]
+        chr_ld = [l2_parser(sub_chr(fh, i) + suffix + s, compression, column_name=column_name) for i in chrs]
         x = pd.concat(chr_ld)  # automatically sorted by chromosome
     else:  # just one file
         s, compression = which_compression(fh + suffix)
-        x = l2_parser(fh + suffix + s, compression)
+        x = l2_parser(fh + suffix + s, compression, column_name=column_name)
 
     x = x.sort_values(by=['CHR', 'BP']) # SEs will be wrong unless sorted
     x = x.drop(['CHR', 'BP'], axis=1).drop_duplicates(subset='SNP')
@@ -262,7 +285,11 @@ def __ID_List_Factory__(colnames, keepcol, fname_end, header=None, usecols=None)
                 raise ValueError('{f} filename must end in {f}'.format(f=end))
 
             comp = get_compression(fname)
-            self.df = pd.read_csv(fname, header=self.__header__, usecols=self.__usecols__,
+            if fname.endswith(".npz"):
+                # Read scipy sparse matrix
+                self.df = pd.DataFrame.sparse.from_spmatrix(scipy.sparse.load_npz(fname))
+            else:
+                self.df = pd.read_csv(fname, header=self.__header__, usecols=self.__usecols__,
                                   delim_whitespace=True, compression=comp)
 
             if self.__colnames__:

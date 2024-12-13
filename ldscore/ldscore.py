@@ -1,7 +1,9 @@
 
 import numpy as np
 import bitarray as ba
-
+from tqdm import tqdm
+import scipy.sparse
+import gc
 
 def getBlockLefts(coords, max_dist):
     '''
@@ -54,9 +56,7 @@ def block_left_to_right(block_left):
     for i in range(M):
         while j < M and block_left[j] <= i:
             j += 1
-
         block_right[i] = j
-
     return block_right
 
 
@@ -123,6 +123,12 @@ class __GenotypeArrayInMemory__(object):
         func = lambda x: self.__l2_unbiased__(x, self.n)
         snp_getter = self.nextSNPs
         return self.__corSumVarBlocks__(block_left, c, func, snp_getter, annot)
+    
+    def CorBlocks(self, block_left, c):
+        '''Computes an unbiased estimate of L2(j) for j=1,..,M.'''
+        func = lambda x: self.__l2_unbiased__(x, self.n)
+        snp_getter = self.nextSNPs
+        return self.__corBlocks__(block_left, c, func, snp_getter)
 
     def ldScoreBlockJackknife(self, block_left, c, annot=None, jN=10):
         func = lambda x: np.square(x)
@@ -134,8 +140,7 @@ class __GenotypeArrayInMemory__(object):
         sq = np.square(x)
         return sq - (1-sq) / denom
 
-    # general methods for calculating sums of Pearson correlation coefficients
-    def __corSumVarBlocks__(self, block_left, c, func, snp_getter, annot=None):
+    def __corBlocks__(self, block_left, c, func, snp_getter, annot=None):
         '''
         Parameters
         ----------
@@ -154,6 +159,7 @@ class __GenotypeArrayInMemory__(object):
         snp_getter : function(int)
             The method to be used to get the next SNPs (normalized genotypes? Normalized
             genotypes with the minor allele as reference allele? etc)
+            n_samples x b_SNP
         annot: numpy array with shape (m,n_a)
             SNP annotations.
 
@@ -163,7 +169,7 @@ class __GenotypeArrayInMemory__(object):
             Estimates.
 
         '''
-        m, n = self.m, self.n
+        m, n = self.m, self.n # (SNP, individual)
         block_sizes = np.array(np.arange(m) - block_left)
         block_sizes = np.ceil(block_sizes / c)*c
         if annot is None:
@@ -173,8 +179,7 @@ class __GenotypeArrayInMemory__(object):
             if annot_m != self.m:
                 raise ValueError('Incorrect number of SNPs in annot')
 
-        n_a = annot.shape[1]  # number of annotations
-        cor_sum = np.zeros((m, n_a))
+        corr_mat = scipy.sparse.lil_matrix((m, m))
         # b = index of first SNP for which SNP 0 is not included in LD Score
         b = np.nonzero(block_left > 0)
         if np.any(b):
@@ -186,20 +191,20 @@ class __GenotypeArrayInMemory__(object):
             c = 1
             b = m
         l_A = 0  # l_A := index of leftmost SNP in matrix A
-        A = snp_getter(b)
+        A = snp_getter(b) # n_samples x b_SNP
         rfuncAB = np.zeros((b, c))
         rfuncBB = np.zeros((c, c))
         # chunk inside of block
         for l_B in range(0, b, c):  # l_B := index of leftmost SNP in matrix B
             B = A[:, l_B:l_B+c]
-            np.dot(A.T, B / n, out=rfuncAB)
-            rfuncAB = func(rfuncAB)
-            cor_sum[l_A:l_A+b, :] += np.dot(rfuncAB, annot[l_B:l_B+c, :])
+            rfuncAB = func(np.dot(A.T, B / n))
+            corr_mat[l_A:(l_A+b), l_B:(l_B+c)] = rfuncAB
+            corr_mat[l_B:(l_B+c), l_A:(l_A+b)] = rfuncAB.T
         # chunk to right of block
         b0 = b
         md = int(c*np.floor(m/c))
         end = md + 1 if md != m else md
-        for l_B in range(b0, end, c):
+        for l_B in tqdm(range(b0, end, c)):
             # check if the annot matrix is all zeros for this block + chunk
             # this happens w/ sparse categories (i.e., pathways)
             # update the block
@@ -230,7 +235,113 @@ class __GenotypeArrayInMemory__(object):
             if p1 and p2:
                 continue
 
-            np.dot(A.T, B / n, out=rfuncAB)
+            rfuncAB = np.dot(A.T, B / n) # n_SNP x n_SNP
+            rfuncAB = func(rfuncAB)
+            corr_mat[l_A:l_A+b, l_B:l_B+c] = rfuncAB
+            corr_mat[l_B:l_B+c, l_A:l_A+b] = rfuncAB.T
+            rfuncBB = np.dot(B.T, B / n)
+            rfuncBB = func(rfuncBB)
+            corr_mat[l_B:l_B+c, l_B:l_B+c] = rfuncBB
+
+        return corr_mat.tocsr()
+
+    # general methods for calculating sums of Pearson correlation coefficients
+    def __corSumVarBlocks__(self, block_left, c, func, snp_getter, annot=None):
+        '''
+        Parameters
+        ----------
+        block_left : np.ndarray with shape (M, )
+            block_left[i] = index of leftmost SNP included in LD Score of SNP i.
+            if c > 1, then only entries that are multiples of c are examined, and it is
+            assumed that block_left[a*c+i] = block_left[a*c], except at
+            the beginning of the chromosome where the 0th SNP is included in the window.
+
+        c : int
+            Chunk size.
+        func : function
+            Function to be applied to the genotype correlation matrix. Before dotting with
+            annot. Examples: for biased L2, np.square. For biased L4,
+            lambda x: np.square(np.square(x)). For L1, lambda x: x.
+        snp_getter : function(int)
+            The method to be used to get the next SNPs (normalized genotypes? Normalized
+            genotypes with the minor allele as reference allele? etc)
+            n_samples x b_SNP
+        annot: numpy array with shape (m,n_a)
+            SNP annotations.
+
+        Returns
+        -------
+        cor_sum : np.ndarray with shape (M, num_annots)
+            Estimates.
+
+        '''
+        m, n = self.m, self.n # (SNP, individual)
+        block_sizes = np.array(np.arange(m) - block_left)
+        block_sizes = np.ceil(block_sizes / c)*c
+        if annot is None:
+            annot = np.ones((m, 1))
+        else:
+            annot_m = annot.shape[0]
+            if annot_m != self.m:
+                raise ValueError('Incorrect number of SNPs in annot')
+
+        n_a = annot.shape[1]  # number of annotations
+        cor_sum = np.zeros((m, n_a))
+        # b = index of first SNP for which SNP 0 is not included in LD Score
+        b = np.nonzero(block_left > 0)
+        if np.any(b):
+            b = b[0][0]
+        else:
+            b = m
+        b = int(np.ceil(b/c)*c)  # round up to a multiple of c
+        if b > m:
+            c = 1
+            b = m
+        l_A = 0  # l_A := index of leftmost SNP in matrix A
+        A = snp_getter(b) # n_samples x b
+        rfuncAB = np.zeros((b, c))
+        rfuncBB = np.zeros((c, c))
+        # chunk inside of block
+        for l_B in range(0, b, c):  # l_B := index of leftmost SNP in matrix B
+            B = A[:, l_B:l_B+c]
+            rfuncAB = func(np.dot(A.T, B / n))
+            cor_sum[l_A:l_A+b, :] += np.dot(rfuncAB, annot[l_B:l_B+c, :])
+        # chunk to right of block
+        b0 = b
+        md = int(c*np.floor(m/c)) # Why use all blocks till the end?
+        end = md + 1 if md != m else md
+        for l_B in tqdm(range(b0, end, c)):
+            # check if the annot matrix is all zeros for this block + chunk
+            # this happens w/ sparse categories (i.e., pathways)
+            # update the block
+            old_b = b
+            b = int(block_sizes[l_B])
+            if l_B > b0 and b > 0:
+                # block_size can't increase more than c
+                # block_size can't be less than c unless it is zero
+                # both of these things make sense
+                A = np.hstack((A[:, old_b-b+c:old_b], B))
+                l_A += old_b-b+c
+            elif l_B == b0 and b > 0:
+                A = A[:, b0-b:b0]
+                l_A = b0-b
+            elif b == 0:  # no SNPs to left in window, e.g., after a sequence gap
+                A = np.array(()).reshape((n, 0))
+                l_A = l_B
+            if l_B == md:
+                c = m - md
+                rfuncAB = np.zeros((b, c))
+                rfuncBB = np.zeros((c, c))
+            if b != old_b:
+                rfuncAB = np.zeros((b, c))
+
+            B = snp_getter(c) # n_samples x c
+            p1 = np.all(annot[l_A:l_A+b, :] == 0)
+            p2 = np.all(annot[l_B:l_B+c, :] == 0)
+            if p1 and p2:
+                continue
+
+            rfuncAB = np.dot(A.T, B / n) # n_SNP x n_SNP
             rfuncAB = func(rfuncAB)
             cor_sum[l_A:l_A+b, :] += np.dot(rfuncAB, annot[l_B:l_B+c, :])
             cor_sum[l_B:l_B+c, :] += np.dot(annot[l_A:l_A+b, :].T, rfuncAB).T

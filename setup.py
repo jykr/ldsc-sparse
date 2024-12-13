@@ -1,5 +1,5 @@
-from setuptools import setup
-
+from setuptools import setup, find_packages
+import numpy as np
 # read the contents of your README file
 from pathlib import Path
 this_directory = Path(__file__).parent
@@ -14,7 +14,8 @@ setup(name='ldsc',
       author='Brendan Bulik-Sullivan and Hilary Finucane',
       author_email='',
       license='GPLv3',
-      packages=['ldscore'],
+      packages=find_packages(),
+      include_dirs=np.get_include(),
       scripts=['ldsc.py', 'munge_sumstats.py', 'make_annot.py'],
       install_requires = [
             'bitarray>=2.6.0',
