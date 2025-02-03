@@ -146,11 +146,11 @@ def _read_chr_split_files(chr_arg, not_chr_arg, log, noun, parsefunc, **kwargs):
     '''Read files split across 22 chromosomes (annot, ref_ld, w_ld).'''
     try:
         if not_chr_arg:
-            log.log('Reading {N} from {F} ... ({p})'.format(N=noun, F=not_chr_arg, p=parsefunc.__name__))
+            log.log('Reading {N} from {F} ... '.format(N=noun, F=not_chr_arg))
             out = parsefunc(_splitp(not_chr_arg), **kwargs)
         elif chr_arg:
             f = ps.sub_chr(chr_arg, '[1-22]')
-            log.log('Reading {N} from {F} ... ({p})'.format(N=noun, F=f, p=parsefunc.__name__))
+            log.log('Reading {N} from {F} ... '.format(N=noun, F=f))
             out = parsefunc(_splitp(chr_arg), _N_CHR, **kwargs)
     except ValueError as e:
         log.log('Error parsing {N}.'.format(N=noun))
@@ -285,7 +285,7 @@ def cell_type_specific(args, log):
     s = lambda x: np.array(x).reshape((n_snp, 1))
     results_columns = ['Name', 'Coefficient', 'Coefficient_std_error', 'Coefficient_P_value']
     results_data = []
-    if args.n_annots is None:
+    if args.n_annot is None:
         for (name, ct_ld_chr) in [x.split() for x in open(args.ref_ld_chr_cts).readlines()]:
             ref_ld_cts_allsnps = _read_chr_split_files(ct_ld_chr, None, log,
                                     'cts reference panel LD Score', ps.ldscore_fromlist)
@@ -309,10 +309,10 @@ def cell_type_specific(args, log):
                     results_data.append((name+'_'+str(i), coef, coef_se, stats.norm.sf(coef/coef_se)))
     else:
         assert args.ref_ld_chr is not None
-        for annot_id in tqdm(range(args.n_annots)):
+        for annot_id in tqdm(range(args.n_annot)):
             name = f"{annot_id}L2"
             ref_ld_cts_allsnps = _read_chr_split_files(
-                args.ref_ld_chr, 
+                args.ref_ld_chr_cts, 
                 None, 
                 log,
                 'cts reference panel LD Score', 
@@ -325,7 +325,7 @@ def cell_type_specific(args, log):
 
             ref_ld = np.hstack([ref_ld_cts, ref_ld_all_regr])
             M_cts = ps.M_fromlist(
-                    _splitp(ct_ld_chr), _N_CHR, common=(not args.not_M_5_50))
+                    _splitp(args.ref_ld_chr_cts), _N_CHR, common=(not args.not_M_5_50), sub_idx=annot_id)
             M_annot = np.hstack([M_cts, M_annot_all_regr])
             hsqhat = reg.Hsq(s(chisq), ref_ld, s(sumstats[w_ld_cname]), s(sumstats.N),
                         M_annot, n_blocks=n_blocks, intercept=args.intercept_h2,
@@ -333,7 +333,7 @@ def cell_type_specific(args, log):
             coef, coef_se = hsqhat.coef[0], hsqhat.coef_se[0]
             results_data.append((name, coef, coef_se, stats.norm.sf(coef/coef_se)))
             if args.print_all_cts:
-                for i in range(1, len(ct_ld_chr.split(','))):
+                for i in range(1, len(args.ref_ld_chr_cts.split(','))):
                     coef, coef_se = hsqhat.coef[i], hsqhat.coef_se[i]
                     results_data.append((name+'_'+str(i), coef, coef_se, stats.norm.sf(coef/coef_se)))
         

@@ -19,7 +19,7 @@ def series_eq(x, y):
 
 
 def read_csv(fh, **kwargs):
-    return pd.read_csv(fh, delim_whitespace=True, na_values='.', **kwargs)
+    return pd.read_csv(fh, sep='\s+', na_values='.', **kwargs)
 
 
 def sub_chr(s, chrom):
@@ -104,7 +104,6 @@ def ldscore_fromlist(flist, num=None, column_name=None):
     '''Sideways concatenation of a list of LD Score files.'''
     ldscore_array = []
     for i, fh in enumerate(flist):
-        print(fh)
         y = ldscore(fh, num, column_name=column_name)
         if i > 0:
             if not series_eq(y.SNP, ldscore_array[0].SNP):
@@ -150,7 +149,8 @@ def annot_parser(fh, compression, frqfile_full=None, compression_frq=None):
         df_annot = read_csv(fh, header=0, compression=compression).drop(['SNP','CHR', 'BP', 'CM'], axis=1, errors='ignore').astype(float)
     if frqfile_full is not None:
         df_frq = frq_parser(frqfile_full, compression_frq)
-        df_annot = df_annot[(.95 > df_frq.FRQ) & (df_frq.FRQ > 0.05)]
+        df_annot = df_annot[(df_frq.FRQ < 0.95) & (df_frq.FRQ > 0.05)]
+
     return df_annot
 
 
@@ -180,7 +180,7 @@ def ldscore(fh, num=None, column_name = None):
     return x
 
 
-def M(fh, num=None, N=2, common=False):
+def M(fh, num=None, N=2, common=False, sub_idx=None):
     '''Parses .l{N}.M files, split across num chromosomes. See docs/file_formats_ld.txt.'''
     parsefunc = lambda y: [float(z) for z in open(y, 'r').readline().split()]
     suffix = '.l' + str(N) + '.M'
@@ -188,16 +188,20 @@ def M(fh, num=None, N=2, common=False):
         suffix += '_5_50'
 
     if num is not None:
-        x = np.sum([parsefunc(sub_chr(fh, i) + suffix) for i in get_present_chrs(fh, num+1)], axis=0)
+        if sub_idx is not None:
+            x = np.sum([parsefunc(sub_chr(fh, i) + suffix)[sub_idx] for i in get_present_chrs(fh, num+1)], axis=0)
+            return np.array(x).reshape((1, 1))
+        else:
+             x = np.sum([parsefunc(sub_chr(fh, i) + suffix) for i in get_present_chrs(fh, num+1)], axis=0)
     else:
         x = parsefunc(fh + suffix)
 
     return np.array(x).reshape((1, len(x)))
 
 
-def M_fromlist(flist, num=None, N=2, common=False):
+def M_fromlist(flist, num=None, N=2, common=False, sub_idx=None):
     '''Read a list of .M* files and concatenate sideways.'''
-    return np.hstack([M(fh, num, N, common) for fh in flist])
+    return np.hstack([M(fh, num, N, common, sub_idx=sub_idx) for fh in flist])
 
 
 def annot(fh_list, num=None, frqfile=None):

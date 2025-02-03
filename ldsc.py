@@ -347,9 +347,9 @@ def ldscore(args, log):
         float_format='%.3f')
     call(['gzip', '-f', out_fname])
     if annot_matrix is not None:
-        M = np.atleast_1d(np.squeeze(np.asarray(np.sum(annot_matrix, axis=0))))
+        M = np.atleast_1d(np.squeeze(np.asarray(np.sum(annot_matrix!=0, axis=0))))
         ii = geno_array.maf > 0.05
-        M_5_50 = np.atleast_1d(np.squeeze(np.asarray(np.sum(annot_matrix[ii,:], axis=0))))
+        M_5_50 = np.atleast_1d(np.squeeze(np.asarray(np.sum(annot_matrix[ii,:]!=0, axis=0))))
     else:
         M = [geno_array.m]
         M_5_50 = [np.sum(geno_array.maf > 0.05)]
