@@ -417,7 +417,6 @@ class Hsq(LD_Score_Regression):
         diff_se = np.sqrt(np.diag(diff_cov))
         diff_p = ['NA' if diff_se[i]==0 else 2*tdist.sf(abs(diff_est[i]/diff_se[i]),self.n_blocks) \
             for i in range(self.n_annot)]
-
         df = pd.DataFrame({
             'Category': category_names,
             'Prop._SNPs': one_d_convert(prop_M_overlap),
