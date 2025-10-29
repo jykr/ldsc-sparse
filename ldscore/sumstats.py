@@ -128,6 +128,7 @@ def _read_annot(args, log):
 
     return overlap_matrix, M_tot
 
+
 def _read_annot_cts(args, log):
     """Read annot matrix."""
     annot, M_tot = _read_chr_split_files(
@@ -262,6 +263,19 @@ def _print_cov(ldscore_reg, ofh, log):
     np.savetxt(ofh, ldscore_reg.coef_cov)
 
 
+def _print_residuals(ldscore_reg, sumstats, ofh, log):
+    """Prints residuals."""
+    log.log("Printing residuals to {F}.".format(F=ofh))
+    sumstats_with_res = pd.concat(
+        [
+            sumstats[["SNP", "LD_weights"]],
+            pd.DataFrame({"residuals": ldscore_reg.residuals}),
+        ],
+        axis=1,
+    )
+    sumstats_with_res.to_csv(ofh, sep="\t", index=False)
+
+
 def _print_delete_values(ldscore_reg, ofh, log):
     """Prints block jackknife delete-k values"""
     log.log("Printing block jackknife delete values to {F}.".format(F=ofh))
@@ -307,7 +321,7 @@ def cell_type_specific(args, log):
         args.intercept_h2 = float(args.intercept_h2)
     if args.no_intercept:
         args.intercept_h2 = 1
-    #if args.ref_ld_chr or args.ref_ld:
+    # if args.ref_ld_chr or args.ref_ld:
     M_annot_all_regr, w_ld_cname, ref_ld_cnames_all_regr, sumstats, novar_cols = (
         _read_ld_sumstats(args, log, args.h2_cts)
     )
@@ -381,9 +395,9 @@ def cell_type_specific(args, log):
                 twostep=None,
                 old_weights=True,
             )
-            
-            #coef, coef_se = hsqhat.coef[0], hsqhat.coef_se[0]
-            #results_data.append((name, coef, coef_se, stats.norm.sf(coef / coef_se)))
+
+            # coef, coef_se = hsqhat.coef[0], hsqhat.coef_se[0]
+            # results_data.append((name, coef, coef_se, stats.norm.sf(coef / coef_se)))
             if args.print_all_cts:
                 for i in range(1, len(ct_ld_chr.split(","))):
                     coef, coef_se = hsqhat.coef[i], hsqhat.coef_se[i]
@@ -399,7 +413,7 @@ def cell_type_specific(args, log):
         assert args.ref_ld_chr is not None
         if args.overlap_annot:
             overlap_matrix, M_tot = _read_annot_cts(args, log)
-            
+
         for annot_id in tqdm(range(args.n_annot)):
             name = f"{annot_id}L2"
             ref_ld_cts_allsnps = _read_chr_split_files(
@@ -441,7 +455,10 @@ def cell_type_specific(args, log):
             )
             log.log(
                 hsqhat.summary(
-                    ref_ld_colnames=None, P=args.samp_prev, K=args.pop_prev, overlap=args.overlap_annot
+                    ref_ld_colnames=None,
+                    P=args.samp_prev,
+                    K=args.pop_prev,
+                    overlap=args.overlap_annot,
                 )
             )
             # if args.overlap_annot:
@@ -452,7 +469,7 @@ def cell_type_specific(args, log):
             coef, coef_se = hsqhat.coef[0], hsqhat.coef_se[0]
             # pkl.dump({'M_annot':M_annot, 'ref_ld':ref_ld,'sumstats':sumstats, 'ref_ld_cts':ref_ld_cts, 'w_ld_cname':w_ld_cname, 'ref_ld_all_regr':ref_ld_all_regr, "hsqhat":hsqhat}, open(f"{args.out}.{annot_id}_cts.tmp.pkl",  'wb'))
             results_data.append((name, coef, coef_se, stats.norm.sf(coef / coef_se)))
-            
+
             if args.print_all_cts:
                 for i in range(1, len(args.ref_ld_chr_cts.split(","))):
                     coef, coef_se = hsqhat.coef[i], hsqhat.coef_se[i]
@@ -534,6 +551,8 @@ def estimate_h2(args, log):
 
     if args.print_cov:
         _print_cov(hsqhat, args.out + ".cov", log)
+    if args.print_residuals:
+        _print_residuals(hsqhat, sumstats, args.out + ".residuals", log)
     if args.print_delete_vals:
         _print_delete_values(hsqhat, args.out + ".delete", log)
         _print_part_delete_values(hsqhat, args.out + ".part_delete", log)
