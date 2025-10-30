@@ -63,12 +63,10 @@ class IRWLS(object):
             raise ValueError(
                 "w has shape {S}. w must have shape ({N}, 1).".format(S=w.shape, N=n)
             )
-        print("IRWLS:", x.shape)
         jknife = self.irwls(
             x, y, update_func, n_blocks, w, slow=slow, separators=separators
         )
         self.est = jknife.est
-        print(jknife.est.shape)
         self.jknife_se = jknife.jknife_se
         self.jknife_est = jknife.jknife_est
         self.jknife_var = jknife.jknife_var

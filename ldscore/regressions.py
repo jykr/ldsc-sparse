@@ -170,7 +170,6 @@ class LD_Score_Regression(object):
         M_tot = float(np.sum(M))
         x_tot = np.sum(x, axis=1).reshape((n_snp, 1))
         self.constrain_intercept = intercept is not None
-        print("CONSTRAIN INTERCEPT: ", self.constrain_intercept)
         self.intercept = intercept
         self.n_blocks = n_blocks
         tot_agg = self.aggregate(y, x_tot, N, M_tot, intercept)
@@ -224,7 +223,6 @@ class LD_Score_Regression(object):
             initial_w = np.sqrt(initial_w)
             x = IRWLS._weight(x, initial_w)
             y = IRWLS._weight(yp, initial_w)
-            print("X and YP SHAPE:", x.shape, yp.shape)
             jknife = jk.LstsqJackknifeFast(x, y, n_blocks)
         else:
             update_func = lambda a: self._update_func(
